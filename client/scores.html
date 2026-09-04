@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StreamLive — Scores &amp; Fixtures</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">Stream<span>Live</span></div>
+    <nav>
+      <a href="/index.html">Matches</a>
+      <a href="/scores.html">Scores</a>
+      <a href="/admin.html">Create match</a>
+    </nav>
+  </header>
+  <main>
+    <h2 style="margin-bottom:4px;">Premier League, La Liga &amp; Champions League</h2>
+    <div style="color:var(--muted); font-size:13px; margin-bottom:16px;">
+      Fixtures &amp; results only — for the live broadcast, use the official rights-holder for your region (linked below each competition).
+    </div>
+
+    <div class="ad-slot">
+      <div class="ad-slot-label">Ad slot</div>
+      <div class="ad-slot-body">
+        Wire this to your ad network's display unit (Google AdSense / Ad Manager) once your site is approved.
+      </div>
+    </div>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-comp="epl">Premier League</button>
+      <button class="tab" data-comp="laliga">La Liga</button>
+      <button class="tab" data-comp="ucl">Champions League</button>
+    </div>
+
+    <div id="watchLegally" class="watch-legally"></div>
+
+    <div class="fixture-toggle">
+      <button class="toggle-btn active" data-type="next">Upcoming</button>
+      <button class="toggle-btn" data-type="last">Recent results</button>
+    </div>
+
+    <div id="fixturesList"></div>
+  </main>
+
+  <script src="/reminders.js"></script>
+  <script>
+    let activeComp = 'epl';
+    let activeType = 'next';
+
+    document.querySelectorAll('.tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeComp = btn.dataset.comp;
+        loadWatchLegally();
+        loadFixtures();
+      });
+    });
+
+    document.querySelectorAll('.toggle-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.toggle-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        activeType = btn.dataset.type;
+        loadFixtures();
+      });
+    });
+
+    function formatDate(iso) {
+      return new Date(iso).toLocaleString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      });
+    }
+
+    function statusLabel(f) {
+      if (f.status === 'LIVE') return `LIVE${f.elapsed ? ' ' + f.elapsed + "'" : ''}`;
+      if (f.status === 'FT') return 'Full time';
+      if (f.status === 'NS') return formatDate(f.date);
+      return f.status;
+    }
+
+    function teamLogo(team) {
+      return team.logo ? `<img src="${team.logo}" alt="" onerror="this.style.visibility='hidden'" />` : '';
+    }
+
+    function fixtureCard(f) {
+      const isLive = f.status === 'LIVE';
+      const isUpcoming = f.status === 'NS';
+      const hasScore = f.score.home !== null && f.score.home !== undefined;
+      const alreadySet = window.StreamLiveReminders && window.StreamLiveReminders.has(String(f.id));
+      return `
+        <div class="fixture-card">
+          <div class="fixture-status ${isLive ? 'live' : ''}">${statusLabel(f)}</div>
+          <div class="fixture-teams">
+            <div class="fixture-team">
+              ${teamLogo(f.home)}
+              <span>${f.home.name}</span>
+            </div>
+            <div class="fixture-score">${hasScore ? `${f.score.home} – ${f.score.away}` : 'vs'}</div>
+            <div class="fixture-team">
+              ${teamLogo(f.away)}
+              <span>${f.away.name}</span>
+            </div>
+          </div>
+          ${f.venue ? `<div class="fixture-venue">${f.venue}</div>` : ''}
+          ${isUpcoming ? `
+            <button class="remind-btn ${alreadySet ? 'set' : ''}"
+              data-fixture-id="${f.id}"
+              data-title="${f.competition}"
+              data-teams="${f.home.name} vs ${f.away.name}"
+              data-kickoff="${f.date}">
+              ${alreadySet ? '🔔 Reminder set' : '🔔 Remind me'}
+            </button>` : ''}
+        </div>`;
+    }
+
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.remind-btn');
+      if (!btn) return;
+      const fixtureId = btn.dataset.fixtureId;
+      if (btn.classList.contains('set')) {
+        window.StreamLiveReminders.remove(fixtureId);
+        btn.classList.remove('set');
+        btn.textContent = '🔔 Remind me';
+        return;
+      }
+      const result = await window.StreamLiveReminders.add({
+        fixtureId,
+        title: btn.dataset.title,
+        teams: btn.dataset.teams,
+        kickoff: btn.dataset.kickoff,
+      });
+      if (result.ok) {
+        btn.classList.add('set');
+        btn.textContent = '🔔 Reminder set';
+      } else if (result.reason === 'denied') {
+        alert('Notifications are blocked. Enable them for this site in your browser settings to get kickoff reminders.');
+      } else {
+        alert('Your browser does not support notifications.');
+      }
+    });
+
+    async function loadFixtures() {
+      const el = document.getElementById('fixturesList');
+      el.innerHTML = '<div class="empty">Loading…</div>';
+      const res = await fetch(`/api/fixtures/${activeComp}?type=${activeType}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        el.innerHTML = `
+          <div class="empty">
+            ${body.error || 'Could not load fixtures.'}
+            ${body.hint ? `<div style="margin-top:8px; font-size:12px;">${body.hint}</div>` : ''}
+          </div>`;
+        return;
+      }
+      const data = await res.json();
+      if (!data.fixtures || data.fixtures.length === 0) {
+        el.innerHTML = '<div class="empty">No fixtures found.</div>';
+        return;
+      }
+      el.innerHTML = `<div class="fixture-list">${data.fixtures.map(fixtureCard).join('')}</div>`;
+    }
+
+    async function loadWatchLegally() {
+      const el = document.getElementById('watchLegally');
+      const res = await fetch(`/api/watch-legally/${activeComp}`);
+      if (!res.ok) { el.innerHTML = ''; return; }
+      const info = await res.json();
+      el.innerHTML = `
+        <div class="watch-legally-title">Where to watch legally</div>
+        <div class="watch-legally-regions">
+          ${info.regions.map((r) => `<div><strong>${r.region}:</strong> ${r.broadcasters.join(', ')}</div>`).join('')}
+        </div>
+        <a href="${info.officialUrl}" target="_blank" rel="noopener" class="watch-legally-link">Official competition site &rarr;</a>
+        <div class="watch-legally-disclaimer">Broadcast rights vary by season and region — always confirm with the official site.</div>`;
+    }
+
+    loadWatchLegally();
+    loadFixtures();
+  </script>
+</body>
+</html>

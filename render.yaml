@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: streamlive
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: RAPIDAPI_KEY
+        sync: false

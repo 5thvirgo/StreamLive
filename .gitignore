@@ -1,0 +1,4 @@
+node_modules/
+server/media/
+server/.env
+*.log

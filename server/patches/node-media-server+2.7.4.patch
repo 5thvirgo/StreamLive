@@ -1,0 +1,13 @@
+diff --git a/node_modules/node-media-server/src/node_trans_server.js b/node_modules/node-media-server/src/node_trans_server.js
+index d5aca14..9867787 100644
+--- a/node_modules/node-media-server/src/node_trans_server.js
++++ b/node_modules/node-media-server/src/node_trans_server.js
+@@ -42,7 +42,7 @@ class NodeTransServer {
+     }
+     context.nodeEvent.on('postPublish', this.onPostPublish.bind(this));
+     context.nodeEvent.on('donePublish', this.onDonePublish.bind(this));
+-    Logger.log(`Node Media Trans Server started for apps: [ ${apps}] , MediaRoot: ${this.config.http.mediaroot}, ffmpeg version: ${version}`);
++    Logger.log(`Node Media Trans Server started for apps: [ ${apps}] , MediaRoot: ${this.config.http.mediaroot}`);
+   }
+ 
+   onPostPublish(id, streamPath, args) {

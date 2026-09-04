@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StreamLive</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">Stream<span>Live</span></div>
+    <nav>
+      <a href="/index.html">Matches</a>
+      <a href="/scores.html">Scores</a>
+      <a href="/admin.html">Create match</a>
+    </nav>
+  </header>
+  <main>
+    <h2 style="margin-bottom:0;">Matches</h2>
+    <div id="sections"></div>
+    <div id="empty" class="empty" style="display:none;">No matches yet. <a href="/admin.html" style="color:#4f7cff;">Create one</a>.</div>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/reminders.js"></script>
+  <script>
+    const sectionsEl = document.getElementById('sections');
+    const empty = document.getElementById('empty');
+
+    function badge(status) {
+      if (status === 'live') return '<span class="badge live">Live</span>';
+      if (status === 'ended') return '<span class="badge">Ended</span>';
+      return '<span class="badge">Upcoming</span>';
+    }
+
+    function isSameDay(a, b) {
+      return a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+    }
+
+    function groupMatches(matches) {
+      const now = new Date();
+      const tomorrow = new Date(now);
+      tomorrow.setDate(now.getDate() + 1);
+
+      const groups = { live: [], today: [], tomorrow: [], later: [], ended: [] };
+      for (const m of matches) {
+        const kickoff = new Date(m.kickoff);
+        if (m.status === 'live') groups.live.push(m);
+        else if (m.status === 'ended') groups.ended.push(m);
+        else if (isSameDay(kickoff, now)) groups.today.push(m);
+        else if (isSameDay(kickoff, tomorrow)) groups.tomorrow.push(m);
+        else groups.later.push(m);
+      }
+      return groups;
+    }
+
+    function formatKickoff(ms) {
+      return new Date(ms).toLocaleString(undefined, {
+        weekday: 'short', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+      });
+    }
+
+    function cardHtml(m) {
+      return `
+        <a class="card" href="/watch.html?id=${m.id}">
+          <div class="thumb">
+            ${badge(m.status)}
+            ${m.status === 'live' ? '▶ Now playing' : 'Video preview'}
+          </div>
+          <div class="info">
+            <div class="title">${m.title}</div>
+            <div class="teams">${m.homeTeam} vs ${m.awayTeam}</div>
+            <div class="kickoff">${formatKickoff(m.kickoff)}</div>
+          </div>
+        </a>`;
+    }
+
+    function sectionHtml(label, list) {
+      if (list.length === 0) return '';
+      return `
+        <div class="section-heading">${label}</div>
+        <div class="grid">${list.map(cardHtml).join('')}</div>`;
+    }
+
+    async function loadMatches() {
+      const res = await fetch('/api/matches');
+      const matches = await res.json();
+      empty.style.display = matches.length === 0 ? 'block' : 'none';
+      const g = groupMatches(matches);
+      sectionsEl.innerHTML = [
+        sectionHtml('🔴 Live now', g.live),
+        sectionHtml('Today', g.today),
+        sectionHtml('Tomorrow', g.tomorrow),
+        sectionHtml('Upcoming', g.later),
+        sectionHtml('Recently ended', g.ended),
+      ].join('');
+    }
+
+    const socket = io();
+    socket.on('matches:updated', loadMatches);
+    loadMatches();
+    setInterval(loadMatches, 5000);
+  </script>
+</body>
+</html>

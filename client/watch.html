@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StreamLive — Watch</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">Stream<span>Live</span></div>
+    <nav>
+      <a href="/index.html">Matches</a>
+      <a href="/scores.html">Scores</a>
+      <a href="/admin.html">Create match</a>
+    </nav>
+  </header>
+  <main>
+    <a class="back-link" href="/index.html">&larr; Back to matches</a>
+    <div class="watch-layout">
+      <div>
+        <div class="player-wrap" id="playerWrap">
+          <video id="video" controls autoplay muted playsinline></video>
+          <div id="adContainer" class="ad-container"></div>
+          <div id="adBadge" class="ad-badge" style="display:none;">Ad</div>
+        </div>
+        <div class="match-meta">
+          <h1 id="title">Loading…</h1>
+          <div class="teams" id="teams"></div>
+        </div>
+      </div>
+      <div class="chat">
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input">
+          <input type="text" id="chatText" placeholder="Say something…" />
+          <button id="chatSend">Send</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+  <script src="https://imasdk.googleapis.com/js/sdkloader/ima3.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/reminders.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const matchId = params.get('id');
+    const video = document.getElementById('video');
+    const adContainerEl = document.getElementById('adContainer');
+    const adBadge = document.getElementById('adBadge');
+    let hls = null;
+    let loadedHlsUrl = null;
+
+    // --- Ad slot (pre-roll) ---------------------------------------------
+    // AD_TAG_URL is where the actual ad money comes from. This is Google's
+    // public IMA sample VAST tag, used only so the ad pipeline is testable
+    // out of the box. Swap it for the tag URL from your own ad account
+    // (Google Ad Manager / AdSense for Video, or any VAST-compatible
+    // network) once you're ready to monetize for real.
+    const AD_TAG_URL = 'https://pubads.g.doubleclick.net/gampad/ads?iu=/21775744923/external/single_ad_samples&sz=640x480&cust_params=sample_ct%3Dlinear&ciu_szs=300x250%2C728x90&gdfp_req=1&output=vast&unviewed_position_start=1&env=vp&impl=s&correlator=';
+
+    let adsLoader = null;
+    let adsManager = null;
+    let adsPlayedForCurrentStream = false;
+
+    function initAds() {
+      if (adsLoader || typeof google === 'undefined' || !google.ima) return;
+      google.ima.settings.setDisableCustomPlaybackForIOS10Plus(true);
+      const adDisplayContainer = new google.ima.AdDisplayContainer(adContainerEl, video);
+      adsLoader = new google.ima.AdsLoader(adDisplayContainer);
+      adsLoader.addEventListener(
+        google.ima.AdsManagerLoadedEvent.Type.ADS_MANAGER_LOADED,
+        (e) => onAdsManagerLoaded(e, adDisplayContainer),
+        false
+      );
+      adsLoader.addEventListener(google.ima.AdErrorEvent.Type.AD_ERROR, onAdError, false);
+    }
+
+    function onAdsManagerLoaded(adsManagerLoadedEvent, adDisplayContainer) {
+      const adsRenderingSettings = new google.ima.AdsRenderingSettings();
+      adsRenderingSettings.restoreCustomPlaybackStateOnAdBreakComplete = true;
+      adsManager = adsManagerLoadedEvent.getAdsManager(video, adsRenderingSettings);
+
+      adsManager.addEventListener(google.ima.AdErrorEvent.Type.AD_ERROR, onAdError);
+      adsManager.addEventListener(google.ima.AdEvent.Type.CONTENT_PAUSE_REQUESTED, onAdStart);
+      adsManager.addEventListener(google.ima.AdEvent.Type.CONTENT_RESUME_REQUESTED, onAdEnd);
+      adsManager.addEventListener(google.ima.AdEvent.Type.ALL_ADS_COMPLETED, onAdEnd);
+
+      try {
+        adDisplayContainer.initialize();
+        const width = video.clientWidth || 640;
+        const height = video.clientHeight || 360;
+        adsManager.init(width, height, google.ima.ViewMode.NORMAL);
+        adsManager.start();
+      } catch (e) {
+        console.warn('Ad init failed, falling back to content:', e);
+        onAdEnd();
+      }
+    }
+
+    function onAdStart() {
+      video.controls = false;
+      adContainerEl.classList.add('active');
+      adBadge.style.display = 'block';
+    }
+
+    function onAdEnd() {
+      video.controls = true;
+      adContainerEl.classList.remove('active');
+      adBadge.style.display = 'none';
+      if (pendingHlsUrl) startHlsPlayback(pendingHlsUrl);
+    }
+
+    function onAdError(e) {
+      const err = e && e.getError ? e.getError() : null;
+      console.warn('Ad error, falling back to content:', err ? err.toString() : e);
+      if (adsManager) adsManager.destroy();
+      onAdEnd();
+    }
+
+    let pendingHlsUrl = null;
+
+    function playWithPreroll(url) {
+      pendingHlsUrl = url;
+      if (adsPlayedForCurrentStream) {
+        startHlsPlayback(url);
+        return;
+      }
+      adsPlayedForCurrentStream = true;
+      initAds();
+      if (!adsLoader) {
+        startHlsPlayback(url); // IMA SDK failed to load (e.g. offline/blocked) — fall back to content only
+        return;
+      }
+      const adsRequest = new google.ima.AdsRequest();
+      adsRequest.adTagUrl = AD_TAG_URL;
+      adsRequest.linearAdSlotWidth = video.clientWidth || 640;
+      adsRequest.linearAdSlotHeight = video.clientHeight || 360;
+      adsRequest.nonLinearAdSlotWidth = video.clientWidth || 640;
+      adsRequest.nonLinearAdSlotHeight = (video.clientHeight || 360) / 3;
+      adsLoader.requestAds(adsRequest);
+    }
+
+    // --- Live HLS content --------------------------------------------------
+    function startHlsPlayback(url) {
+      if (hls) { hls.destroy(); hls = null; }
+      if (Hls.isSupported()) {
+        hls = new Hls({ liveSyncDurationCount: 3 });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url;
+        video.addEventListener('loadedmetadata', () => video.play().catch(() => {}));
+      }
+    }
+
+    async function loadMatch() {
+      const res = await fetch(`/api/matches/${matchId}`);
+      if (!res.ok) {
+        document.getElementById('title').textContent = 'Match not found';
+        return;
+      }
+      const match = await res.json();
+      document.getElementById('title').textContent = match.title;
+      document.getElementById('teams').textContent = `${match.homeTeam} vs ${match.awayTeam} — ${match.status}`;
+      if (match.status === 'live' && match.hlsUrl && match.hlsUrl !== loadedHlsUrl) {
+        loadedHlsUrl = match.hlsUrl;
+        playWithPreroll(match.hlsUrl);
+      } else if (match.status === 'ended') {
+        document.getElementById('teams').textContent += ' (stream has ended)';
+      }
+    }
+
+    const socket = io();
+    const chatMessages = document.getElementById('chatMessages');
+    const myName = 'Fan' + Math.floor(Math.random() * 10000);
+
+    function appendMessage({ name, text }) {
+      const div = document.createElement('div');
+      div.className = 'msg';
+      div.innerHTML = `<span class="name">${name}:</span>${text}`;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function appendSystem(text) {
+      const div = document.createElement('div');
+      div.className = 'sys';
+      div.textContent = text;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    socket.emit('join', { matchId, name: myName });
+    socket.on('chat', appendMessage);
+    socket.on('system', appendSystem);
+    socket.on('matches:updated', loadMatch);
+
+    document.getElementById('chatSend').addEventListener('click', sendChat);
+    document.getElementById('chatText').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendChat();
+    });
+
+    function sendChat() {
+      const input = document.getElementById('chatText');
+      const text = input.value.trim();
+      if (!text) return;
+      socket.emit('chat', { matchId, text });
+      input.value = '';
+    }
+
+    loadMatch();
+    setInterval(loadMatch, 5000);
+  </script>
+</body>
+</html>
