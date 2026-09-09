@@ -358,10 +358,19 @@ button:hover { opacity: 0.9; }
 .fixture-list { display: flex; flex-direction: column; gap: 10px; }
 
 .fixture-card {
+  display: block;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 16px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease;
+}
+
+a.fixture-card:hover {
+  border-color: var(--accent);
+  cursor: pointer;
 }
 
 .fixture-status {

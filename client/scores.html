@@ -51,6 +51,7 @@
 
   <script src="/reminders.js"></script>
   <script>
+    const COMPETITION_LABELS = { epl: 'Premier League', laliga: 'La Liga', ucl: 'UEFA Champions League' };
     let activeComp = 'epl';
     let activeType = 'next';
 
@@ -91,13 +92,30 @@
       return team.logo ? `<img src="${team.logo}" alt="" onerror="this.style.visibility='hidden'" />` : '';
     }
 
+    let competitionUrls = {};
+
+    async function loadCompetitionUrls() {
+      const entries = await Promise.all(
+        Object.keys(COMPETITION_LABELS).map(async (key) => {
+          const res = await fetch(`/api/watch-legally/${key}`);
+          if (!res.ok) return null;
+          const info = await res.json();
+          return [COMPETITION_LABELS[key], info.officialUrl];
+        })
+      );
+      competitionUrls = Object.fromEntries(entries.filter(Boolean));
+    }
+
     function fixtureCard(f) {
       const isLive = f.status === 'LIVE';
       const isUpcoming = f.status === 'NS';
       const hasScore = f.score.home !== null && f.score.home !== undefined;
       const alreadySet = window.StreamLiveReminders && window.StreamLiveReminders.has(String(f.id));
+      const url = competitionUrls[f.competition];
+      const tag = url ? 'a' : 'div';
+      const linkAttrs = url ? `href="${url}" target="_blank" rel="noopener" title="Watch legally on the official ${f.competition} site"` : '';
       return `
-        <div class="fixture-card">
+        <${tag} class="fixture-card" ${linkAttrs}>
           <div class="fixture-status ${isLive ? 'live' : ''}">${statusLabel(f)}</div>
           <div class="fixture-teams">
             <div class="fixture-team">
@@ -119,12 +137,13 @@
               data-kickoff="${f.date}">
               ${alreadySet ? '🔔 Reminder set' : '🔔 Remind me'}
             </button>` : ''}
-        </div>`;
+        </${tag}>`;
     }
 
     document.addEventListener('click', async (e) => {
       const btn = e.target.closest('.remind-btn');
       if (!btn) return;
+      e.preventDefault(); // stop the enclosing card-link (if any) from navigating
       const fixtureId = btn.dataset.fixtureId;
       if (btn.classList.contains('set')) {
         window.StreamLiveReminders.remove(fixtureId);
@@ -170,9 +189,11 @@
     }
 
     function liveMatchCard(f) {
-      const alreadySet = window.StreamLiveReminders && window.StreamLiveReminders.has(String(f.id));
+      const url = competitionUrls[f.competition];
+      const tag = url ? 'a' : 'div';
+      const linkAttrs = url ? `href="${url}" target="_blank" rel="noopener" title="Watch legally on the official ${f.competition} site"` : '';
       return `
-        <div class="fixture-card">
+        <${tag} class="fixture-card" ${linkAttrs}>
           <div class="fixture-status live">LIVE${f.elapsed ? ' ' + f.elapsed + "'" : ''} &middot; ${f.competition}</div>
           <div class="fixture-teams">
             <div class="fixture-team">
@@ -186,7 +207,7 @@
             </div>
           </div>
           ${f.venue ? `<div class="fixture-venue">${f.venue}</div>` : ''}
-        </div>`;
+        </${tag}>`;
     }
 
     async function loadLiveMatches() {
@@ -221,9 +242,11 @@
         <div class="watch-legally-disclaimer">Broadcast rights vary by season and region — always confirm with the official site.</div>`;
     }
 
+    loadCompetitionUrls().then(() => {
+      loadFixtures();
+      loadLiveMatches();
+    });
     loadWatchLegally();
-    loadFixtures();
-    loadLiveMatches();
     setInterval(loadLiveMatches, 30000);
   </script>
 </body>
