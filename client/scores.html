@@ -28,6 +28,11 @@
       </div>
     </div>
 
+    <div id="liveSection" style="display:none;">
+      <div class="section-heading">🔴 Live now</div>
+      <div id="liveList" class="fixture-list" style="margin-bottom:28px;"></div>
+    </div>
+
     <div class="tabs" id="tabs">
       <button class="tab active" data-comp="epl">Premier League</button>
       <button class="tab" data-comp="laliga">La Liga</button>
@@ -164,6 +169,44 @@
       el.innerHTML = `<div class="fixture-list">${data.fixtures.map(fixtureCard).join('')}</div>`;
     }
 
+    function liveMatchCard(f) {
+      const alreadySet = window.StreamLiveReminders && window.StreamLiveReminders.has(String(f.id));
+      return `
+        <div class="fixture-card">
+          <div class="fixture-status live">LIVE${f.elapsed ? ' ' + f.elapsed + "'" : ''} &middot; ${f.competition}</div>
+          <div class="fixture-teams">
+            <div class="fixture-team">
+              ${teamLogo(f.home)}
+              <span>${f.home.name}</span>
+            </div>
+            <div class="fixture-score">${f.score.home} – ${f.score.away}</div>
+            <div class="fixture-team">
+              ${teamLogo(f.away)}
+              <span>${f.away.name}</span>
+            </div>
+          </div>
+          ${f.venue ? `<div class="fixture-venue">${f.venue}</div>` : ''}
+        </div>`;
+    }
+
+    async function loadLiveMatches() {
+      const section = document.getElementById('liveSection');
+      const list = document.getElementById('liveList');
+      try {
+        const res = await fetch('/api/live');
+        if (!res.ok) { section.style.display = 'none'; return; }
+        const data = await res.json();
+        if (!data.matches || data.matches.length === 0) {
+          section.style.display = 'none';
+          return;
+        }
+        section.style.display = 'block';
+        list.innerHTML = data.matches.map(liveMatchCard).join('');
+      } catch (e) {
+        section.style.display = 'none';
+      }
+    }
+
     async function loadWatchLegally() {
       const el = document.getElementById('watchLegally');
       const res = await fetch(`/api/watch-legally/${activeComp}`);
@@ -180,6 +223,8 @@
 
     loadWatchLegally();
     loadFixtures();
+    loadLiveMatches();
+    setInterval(loadLiveMatches, 30000);
   </script>
 </body>
 </html>

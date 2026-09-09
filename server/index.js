@@ -7,7 +7,7 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 const NodeMediaServer = require('node-media-server');
 const ffmpegPath = require('ffmpeg-static');
-const { COMPETITIONS, fetchFixtures, WATCH_LEGALLY } = require('./fixtures');
+const { COMPETITIONS, fetchFixtures, fetchLiveMatches, WATCH_LEGALLY } = require('./fixtures');
 
 const PORT = process.env.PORT || 4000;
 const RTMP_PORT = 1935;
@@ -100,6 +100,22 @@ app.get('/api/fixtures/:competition', async (req, res) => {
     }
     console.error('fixtures error:', err.message);
     res.status(502).json({ error: 'Failed to fetch fixtures from upstream provider.' });
+  }
+});
+
+app.get('/api/live', async (req, res) => {
+  try {
+    const matches = await fetchLiveMatches();
+    res.json({ matches });
+  } catch (err) {
+    if (err.code === 'NO_API_KEY') {
+      return res.status(503).json({
+        error: 'No sports-data API key configured.',
+        hint: 'Get a free key at https://rapidapi.com/apidojo/api/sofascore and set RAPIDAPI_KEY.',
+      });
+    }
+    console.error('live matches error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch live matches from upstream provider.' });
   }
 });
 
