@@ -100,15 +100,29 @@ async function fetchFixtures(competitionKey, type) {
   }
 
   const seasonId = await getCurrentSeasonId(comp.id);
-  const endpoint = type === 'last' ? 'get-last-matches' : 'get-next-matches';
   const cacheKey = `${competitionKey}:${type}`;
 
   return cached(cacheKey, CACHE_TTL_MS, async () => {
-    const json = await callApi(`/tournaments/${endpoint}?tournamentId=${comp.id}&seasonId=${seasonId}&pageIndex=0`);
-    const events = (json.events || []).map((e) => normalizeEvent(e, comp.name));
+    // Sofascore's "next" list only holds not-yet-started matches — once a
+    // match kicks off it moves to "last" instead, so an in-progress match
+    // falls into neither list on its own. Always pull "last" too and merge
+    // in anything still live, regardless of which tab is being requested.
+    const [nextJson, lastJson] = await Promise.all([
+      callApi(`/tournaments/get-next-matches?tournamentId=${comp.id}&seasonId=${seasonId}&pageIndex=0`),
+      callApi(`/tournaments/get-last-matches?tournamentId=${comp.id}&seasonId=${seasonId}&pageIndex=0`),
+    ]);
+    const nextEvents = (nextJson.events || []).map((e) => normalizeEvent(e, comp.name));
+    const lastEvents = (lastJson.events || []).map((e) => normalizeEvent(e, comp.name));
+    const liveEvents = lastEvents.filter((f) => f.status === 'LIVE');
+
+    const events = type === 'last' ? lastEvents.filter((f) => f.status === 'FT') : [...liveEvents, ...nextEvents];
     const sorted = type === 'last'
       ? events.sort((a, b) => new Date(b.date) - new Date(a.date))
-      : events.sort((a, b) => new Date(a.date) - new Date(b.date));
+      : events.sort((a, b) => {
+          if (a.status === 'LIVE' && b.status !== 'LIVE') return -1;
+          if (b.status === 'LIVE' && a.status !== 'LIVE') return 1;
+          return new Date(a.date) - new Date(b.date);
+        });
     return sorted.slice(0, 10);
   });
 }
