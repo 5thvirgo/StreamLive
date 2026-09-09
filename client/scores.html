@@ -28,20 +28,16 @@
       </div>
     </div>
 
-    <div id="liveSection" style="display:none;">
-      <div class="section-heading">🔴 Live now</div>
-      <div id="liveList" class="fixture-list" style="margin-bottom:28px;"></div>
-    </div>
-
     <div class="tabs" id="tabs">
-      <button class="tab active" data-comp="epl">Premier League</button>
+      <button class="tab active" data-comp="live">🔴 Live</button>
+      <button class="tab" data-comp="epl">Premier League</button>
       <button class="tab" data-comp="laliga">La Liga</button>
       <button class="tab" data-comp="ucl">Champions League</button>
     </div>
 
-    <div id="watchLegally" class="watch-legally"></div>
+    <div id="watchLegally" class="watch-legally" style="display:none;"></div>
 
-    <div class="fixture-toggle">
+    <div id="fixtureToggle" class="fixture-toggle" style="display:none;">
       <button class="toggle-btn active" data-type="next">Upcoming</button>
       <button class="toggle-btn" data-type="last">Recent results</button>
     </div>
@@ -52,7 +48,7 @@
   <script src="/reminders.js"></script>
   <script>
     const COMPETITION_LABELS = { epl: 'Premier League', laliga: 'La Liga', ucl: 'UEFA Champions League' };
-    let activeComp = 'epl';
+    let activeComp = 'live';
     let activeType = 'next';
 
     document.querySelectorAll('.tab').forEach((btn) => {
@@ -60,8 +56,7 @@
         document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         activeComp = btn.dataset.comp;
-        loadWatchLegally();
-        loadFixtures();
+        render();
       });
     });
 
@@ -73,6 +68,18 @@
         loadFixtures();
       });
     });
+
+    function render() {
+      const isLiveTab = activeComp === 'live';
+      document.getElementById('watchLegally').style.display = isLiveTab ? 'none' : 'block';
+      document.getElementById('fixtureToggle').style.display = isLiveTab ? 'none' : 'flex';
+      if (isLiveTab) {
+        loadLiveMatches();
+      } else {
+        loadWatchLegally();
+        loadFixtures();
+      }
+    }
 
     function formatDate(iso) {
       return new Date(iso).toLocaleString(undefined, {
@@ -106,7 +113,8 @@
       competitionUrls = Object.fromEntries(entries.filter(Boolean));
     }
 
-    function fixtureCard(f) {
+    function fixtureCard(f, opts) {
+      opts = opts || {};
       const isLive = f.status === 'LIVE';
       const isUpcoming = f.status === 'NS';
       const hasScore = f.score.home !== null && f.score.home !== undefined;
@@ -114,9 +122,12 @@
       const url = competitionUrls[f.competition];
       const tag = url ? 'a' : 'div';
       const linkAttrs = url ? `href="${url}" target="_blank" rel="noopener" title="Watch legally on the official ${f.competition} site"` : '';
+      const statusText = isLive && opts.showCompetition
+        ? `${statusLabel(f)} &middot; ${f.competition}`
+        : statusLabel(f);
       return `
         <${tag} class="fixture-card" ${linkAttrs}>
-          <div class="fixture-status ${isLive ? 'live' : ''}">${statusLabel(f)}</div>
+          <div class="fixture-status ${isLive ? 'live' : ''}">${statusText}</div>
           <div class="fixture-teams">
             <div class="fixture-team">
               ${teamLogo(f.home)}
@@ -185,46 +196,31 @@
         el.innerHTML = '<div class="empty">No fixtures found.</div>';
         return;
       }
-      el.innerHTML = `<div class="fixture-list">${data.fixtures.map(fixtureCard).join('')}</div>`;
-    }
-
-    function liveMatchCard(f) {
-      const url = competitionUrls[f.competition];
-      const tag = url ? 'a' : 'div';
-      const linkAttrs = url ? `href="${url}" target="_blank" rel="noopener" title="Watch legally on the official ${f.competition} site"` : '';
-      return `
-        <${tag} class="fixture-card" ${linkAttrs}>
-          <div class="fixture-status live">LIVE${f.elapsed ? ' ' + f.elapsed + "'" : ''} &middot; ${f.competition}</div>
-          <div class="fixture-teams">
-            <div class="fixture-team">
-              ${teamLogo(f.home)}
-              <span>${f.home.name}</span>
-            </div>
-            <div class="fixture-score">${f.score.home} – ${f.score.away}</div>
-            <div class="fixture-team">
-              ${teamLogo(f.away)}
-              <span>${f.away.name}</span>
-            </div>
-          </div>
-          ${f.venue ? `<div class="fixture-venue">${f.venue}</div>` : ''}
-        </${tag}>`;
+      el.innerHTML = `<div class="fixture-list">${data.fixtures.map((f) => fixtureCard(f)).join('')}</div>`;
     }
 
     async function loadLiveMatches() {
-      const section = document.getElementById('liveSection');
-      const list = document.getElementById('liveList');
+      const el = document.getElementById('fixturesList');
+      el.innerHTML = '<div class="empty">Loading…</div>';
       try {
         const res = await fetch('/api/live');
-        if (!res.ok) { section.style.display = 'none'; return; }
-        const data = await res.json();
-        if (!data.matches || data.matches.length === 0) {
-          section.style.display = 'none';
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          el.innerHTML = `
+            <div class="empty">
+              ${body.error || 'Could not load live matches.'}
+              ${body.hint ? `<div style="margin-top:8px; font-size:12px;">${body.hint}</div>` : ''}
+            </div>`;
           return;
         }
-        section.style.display = 'block';
-        list.innerHTML = data.matches.map(liveMatchCard).join('');
+        const data = await res.json();
+        if (!data.matches || data.matches.length === 0) {
+          el.innerHTML = '<div class="empty">No matches live right now. Check the competition tabs for upcoming kickoff times.</div>';
+          return;
+        }
+        el.innerHTML = `<div class="fixture-list">${data.matches.map((f) => fixtureCard(f, { showCompetition: true })).join('')}</div>`;
       } catch (e) {
-        section.style.display = 'none';
+        el.innerHTML = '<div class="empty">Could not load live matches.</div>';
       }
     }
 
@@ -242,12 +238,8 @@
         <div class="watch-legally-disclaimer">Broadcast rights vary by season and region — always confirm with the official site.</div>`;
     }
 
-    loadCompetitionUrls().then(() => {
-      loadFixtures();
-      loadLiveMatches();
-    });
-    loadWatchLegally();
-    setInterval(loadLiveMatches, 30000);
+    loadCompetitionUrls().then(render);
+    setInterval(() => { if (activeComp === 'live') loadLiveMatches(); }, 30000);
   </script>
 </body>
 </html>
